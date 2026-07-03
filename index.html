@@ -1412,87 +1412,122 @@
             border-radius: 4px;
         }
 
-        /* ===== КОМПЬЮТЕРНЫЙ РЕЖИМ — БОЛЬШИЕ КНОПКИ ===== */
+        /* ===== КОМПЬЮТЕРНЫЙ РЕЖИМ — ВСЁ БОЛЬШЕ ===== */
         @media (min-width: 769px) {
-            /* Кнопки создания (Канал, Группа, Папка) */
-            #createBar .create-btn {
-                padding: 10px 24px;
-                font-size: 16px;
-                border-radius: 16px;
+            /* Верхняя панель */
+            #topHeader {
+                padding: 10px 20px;
+                min-height: 60px;
+                gap: 16px;
             }
-            
-            /* Кнопка "Назад" в чате */
-            #chatViewHeader .back-btn {
-                font-size: 28px;
-                padding: 8px 12px;
+            #topHeader .header-left {
+                gap: 14px;
             }
-            
-            /* Кнопка отправки */
-            #inputRow .btn-send {
-                width: 48px;
-                height: 48px;
-                font-size: 22px;
-            }
-            
-            /* Кнопки в поле ввода (📎 🎥 ⭕ 🎤) */
-            #inputRow .input-wrapper .btn-icon {
-                font-size: 22px;
-                padding: 8px 10px;
-            }
-            
-            /* Кнопки внизу (Чаты, Настройки) */
-            #bottomBar .bottom-btn {
+            #topHeader .header-left .app-logo {
+                width: 40px;
+                height: 40px;
                 font-size: 18px;
-                padding: 8px 18px;
             }
-            #bottomBar .bottom-btn .btn-label {
+            #topHeader .header-left .user-avatar {
+                width: 40px;
+                height: 40px;
+                font-size: 16px;
+            }
+            #topHeader .header-left .user-name {
+                font-size: 18px;
+            }
+            #topHeader .search-wrap input {
+                font-size: 16px;
+                padding: 8px 14px 8px 38px;
+                border-radius: 22px;
+                background-size: 18px;
+                background-position: 10px center;
+            }
+            #topHeader .search-wrap input::placeholder {
                 font-size: 15px;
             }
-            
-            /* Кнопка выхода */
             #topHeader .header-right button {
-                font-size: 22px;
-                padding: 6px 10px;
+                font-size: 24px;
+                padding: 8px 12px;
             }
-            
+
+            /* Кнопки создания (Канал, Группа, Папка) */
+            #createBar {
+                padding: 10px 16px;
+                gap: 10px;
+            }
+            #createBar .create-btn {
+                padding: 12px 28px;
+                font-size: 17px;
+                border-radius: 18px;
+            }
+
+            /* Кнопка "Назад" в чате */
+            #chatViewHeader .back-btn {
+                font-size: 30px;
+                padding: 8px 14px;
+            }
+
+            /* Кнопка отправки */
+            #inputRow .btn-send {
+                width: 52px;
+                height: 52px;
+                font-size: 24px;
+            }
+
+            /* Кнопки в поле ввода (📎 🎥 ⭕ 🎤) */
+            #inputRow .input-wrapper .btn-icon {
+                font-size: 24px;
+                padding: 8px 12px;
+            }
+
+            /* Кнопки внизу (Чаты, Настройки) */
+            #bottomBar .bottom-btn {
+                font-size: 20px;
+                padding: 10px 22px;
+            }
+            #bottomBar .bottom-btn .btn-label {
+                font-size: 16px;
+            }
+
             /* Кнопка "Описание" */
             #chatViewHeader .cv-name .desc-btn {
-                font-size: 16px;
-                padding: 4px 10px;
+                font-size: 17px;
+                padding: 6px 12px;
             }
-            
+
             /* Кнопки в модальном окне */
             .modal .btn-primary {
-                font-size: 18px;
-                padding: 14px;
-            }
-            .modal .create-buttons button {
-                font-size: 18px;
-                padding: 14px 20px;
-            }
-            .modal .close-modal {
-                font-size: 28px;
-                padding: 4px 10px;
-            }
-            
-            /* Кнопки входа/регистрации */
-            .login-box .btn-primary {
-                font-size: 20px;
+                font-size: 19px;
                 padding: 16px;
             }
+            .modal .create-buttons button {
+                font-size: 19px;
+                padding: 16px 22px;
+            }
+            .modal .close-modal {
+                font-size: 30px;
+                padding: 6px 12px;
+            }
+
+            /* Кнопки входа/регистрации */
+            .login-box .btn-primary {
+                font-size: 22px;
+                padding: 18px;
+            }
             .login-box .btn-secondary {
-                font-size: 16px;
-                padding: 14px;
+                font-size: 17px;
+                padding: 16px;
             }
             .tab-buttons button {
-                font-size: 17px;
-                padding: 14px;
+                font-size: 18px;
+                padding: 16px;
             }
-            
+
             /* Кнопка "Копировать" */
             .copy-btn {
-                font-size: 14px;
-                padding: 6px 16px;
+                font-size: 15px;
+                padding: 8px 18px;
             }
         }
 
