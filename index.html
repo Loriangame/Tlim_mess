@@ -1729,13 +1729,20 @@
             return await response.json();
         }
 
+        // ПОЛУЧИТЬ ВСЕХ ПОЛЬЗОВАТЕЛЕЙ (БЕЗ КЕША)
         async function getAllUsers() {
-            const response = await fetch(API_URL + '/users');
+            const response = await fetch(API_URL + '/users', {
+                cache: 'no-cache',
+                headers: { 'Cache-Control': 'no-cache' }
+            });
             return await response.json();
         }
 
         async function getUserChats(userId) {
-            const response = await fetch(API_URL + '/chats/' + userId);
+            const response = await fetch(API_URL + '/chats/' + userId, {
+                cache: 'no-cache',
+                headers: { 'Cache-Control': 'no-cache' }
+            });
             return await response.json();
         }
 
@@ -1758,7 +1765,10 @@
         }
 
         async function getChatMessages(chatId) {
-            const response = await fetch(API_URL + '/messages/' + chatId);
+            const response = await fetch(API_URL + '/messages/' + chatId, {
+                cache: 'no-cache',
+                headers: { 'Cache-Control': 'no-cache' }
+            });
             return await response.json();
         }
 
@@ -1968,10 +1978,11 @@
             const results = [];
             const seen = new Set();
 
-            // Получаем всех пользователей с сервера
+            // Получаем всех пользователей с сервера (без кеша)
             const allUsers = await getAllUsers();
+            console.log('👥 Все пользователи на сервере:', allUsers);
 
-            // Ищем пользователей
+            // 1. Поиск пользователей
             allUsers.forEach(user => {
                 if (user.id !== state.user?.id && user.name.toLowerCase().includes(q)) {
                     if (!seen.has(user.id)) {
@@ -1991,7 +2002,7 @@
                 }
             });
 
-            // Поиск каналов
+            // 2. Поиск каналов
             state.chats.forEach(chat => {
                 if (chat.type === 'channel' && chat.name.toLowerCase().includes(q)) {
                     if (!seen.has(chat.id)) {
@@ -2011,7 +2022,7 @@
                 }
             });
 
-            // Поиск групп
+            // 3. Поиск групп
             state.chats.forEach(chat => {
                 if (chat.type === 'group' && chat.name.toLowerCase().includes(q)) {
                     if (!seen.has(chat.id)) {
@@ -2031,7 +2042,7 @@
                 }
             });
 
-            // Поиск личных чатов
+            // 4. Поиск личных чатов
             state.chats.forEach(chat => {
                 if (chat.type === 'chat' && !chat.isBot && chat.name.toLowerCase().includes(q)) {
                     if (!seen.has(chat.id)) {
@@ -2054,7 +2065,11 @@
             resultsContainer.innerHTML = '';
 
             if (results.length === 0) {
-                resultsContainer.innerHTML = '<div style="padding:6px 10px;color:#8e9fb1;font-size:12px;">❌ Ничего не найдено</div>';
+                resultsContainer.innerHTML = `
+                    <div style="padding:6px 10px;color:#8e9fb1;font-size:12px;">
+                        ❌ Ничего не найдено. Всего пользователей: ${allUsers.length}
+                    </div>
+                `;
             } else {
                 results.slice(0, 10).forEach(item => {
                     const div = document.createElement('div');
@@ -2068,8 +2083,9 @@
                     }
 
                     const privateBadge = item.isPrivate ? ' 🔒' : '';
-                    const typeLabel = item.type === 'user' ? '👤' : item.type === 'channel' ? '📢' : item.type === 'group' ?
-                        '👥' : '💬';
+                    const typeLabel = item.type === 'user' ? '👤' :
+                        item.type === 'channel' ? '📢' :
+                        item.type === 'group' ? '👥' : '💬';
 
                     div.innerHTML = `
                         <div class="r-avatar" style="background:${item.avatarColor}">${avatarContent}</div>
@@ -2113,55 +2129,6 @@
             }
 
             resultsContainer.classList.add('show');
-        }
-
-        // ======== RENDER FOLDERS ========
-        function renderFolders() {
-            const bar = document.getElementById('foldersBar');
-            if (!bar) return;
-            let html = `<span class="folder-chip ${!state.currentFolderId ? 'active' : ''}" data-folder="all">📁 Все</span>`;
-            state.folders.forEach(f => {
-                const isActive = state.currentFolderId === f.id;
-                html += `<span class="folder-chip ${isActive ? 'active' : ''}" data-folder="${f.id}">
-                            📂 ${f.name}
-                            <button class="folder-remove" data-folder="${f.id}" title="Удалить папку">✕</button>
-                        </span>`;
-            });
-            bar.innerHTML = html;
-
-            bar.querySelectorAll('.folder-chip').forEach(el => {
-                el.addEventListener('click', (e) => {
-                    if (e.target.classList.contains('folder-remove')) return;
-                    const folderId = el.dataset.folder;
-                    if (folderId === 'all') {
-                        state.currentFolderId = null;
-                    } else {
-                        state.currentFolderId = folderId;
-                    }
-                    saveState();
-                    renderAll();
-                });
-            });
-
-            bar.querySelectorAll('.folder-remove').forEach(btn => {
-                btn.addEventListener('click', (e) => {
-                    e.stopPropagation();
-                    const folderId = btn.dataset.folder;
-                    if (confirm('Удалить папку?')) {
-                        const folder = getFolder(folderId);
-                        if (folder) {
-                            folder.chatIds.forEach(cid => {
-                                const chat = getChat(cid);
-                                if (chat) chat.folderId = null;
-                            });
-                            state.folders = state.folders.filter(f => f.id !== folderId);
-                            if (state.currentFolderId === folderId) state.currentFolderId = null;
-                            saveState();
-                            renderAll();
-                        }
-                    }
-                });
-            });
         }
 
         // ======== RENDER ========
@@ -2231,6 +2198,8 @@
             }
 
             const scrollPos = container.scrollTop;
+            const isAtBottom = container.scrollHeight - container.scrollTop <= container.clientHeight + 50;
+
             container.innerHTML = '';
 
             (chat.messages || []).forEach(msg => {
@@ -2239,7 +2208,12 @@
                 container.appendChild(div);
             });
 
-            container.scrollTop = scrollPos;
+            if (isAtBottom) {
+                container.scrollTop = container.scrollHeight;
+            } else {
+                container.scrollTop = scrollPos;
+            }
+
             updatePinnedBar(chat);
         }
 
@@ -2494,7 +2468,6 @@
                 ` <button class="desc-btn" id="descBtn" title="Описание">ℹ️</button>`;
             document.getElementById('cvStatus').textContent = statusText;
 
-            // Описание
             document.getElementById('descBtn').addEventListener('click', () => {
                 showDescription(chat);
             });
@@ -2506,7 +2479,8 @@
             document.getElementById('popupDesc').textContent = chat.description || 'Нет описания';
             const typeText = chat.type === 'channel' ? '📢 Канал' : chat.type === 'group' ? '👥 Группа' : '💬 Чат';
             const privateText = chat.isPrivate ? '🔒 Приватный' : '🌍 Публичный';
-            document.getElementById('popupInfo').textContent = `${typeText} · ${privateText} · Создан: ${new Date(chat.created).toLocaleDateString()}`;
+            document.getElementById('popupInfo').textContent =
+                `${typeText} · ${privateText} · Создан: ${new Date(chat.created).toLocaleDateString()}`;
             popup.classList.add('show');
         }
 
@@ -2578,8 +2552,11 @@
             msg.isBot = false;
             msg.isSystem = false;
             chat.messages.push(msg);
+
+            // ОБНОВЛЯЕМ ИНТЕРФЕЙС (без перезагрузки)
             renderMessages();
             renderChatList();
+            saveState();
 
             if (isBotChat(chat) && text) {
                 processBotResponse(chat, text);
@@ -3120,7 +3097,6 @@
                             </span>
                         `).join('');
 
-                // Список чатов для добавления в группу
                 const chatListHtml = state.chats
                     .filter(c => c.type === 'channel' || c.type === 'chat')
                     .map(c => `
@@ -3153,7 +3129,6 @@
                             <button class="btn-primary" id="confirmGroupBtn">Создать (${selectedUsers.length} уч.)</button>
                         `;
 
-                // Обработчик для выбора чатов
                 document.querySelectorAll('.chat-select-checkbox').forEach(cb => {
                     cb.addEventListener('change', () => {
                         if (cb.checked) {
@@ -3236,7 +3211,6 @@
                         description);
                     if (newChat) {
                         if (avatarData) newChat.avatarImg = avatarData;
-                        // Добавляем выбранные чаты в группу (как ссылки)
                         if (selectedChats.length > 0) {
                             const chatNames = selectedChats.map(id => {
                                 const c = getChat(id);
@@ -3330,6 +3304,31 @@
             document.getElementById('registerBtn').textContent = '📧 Зарегистрироваться';
         }
 
+        // ======== АВТООБНОВЛЕНИЕ СООБЩЕНИЙ ========
+        async function autoRefreshMessages() {
+            if (!state.currentChatId) return;
+
+            try {
+                const chat = getChat(state.currentChatId);
+                if (!chat) return;
+
+                const messages = await getChatMessages(chat.id);
+                if (messages && messages.length > 0) {
+                    const lastLocalMsg = chat.messages[chat.messages.length - 1];
+                    const lastServerMsg = messages[messages.length - 1];
+
+                    if (!lastLocalMsg || lastServerMsg.id !== lastLocalMsg.id) {
+                        chat.messages = messages;
+                        renderMessages();
+                        renderChatList();
+                        saveState();
+                    }
+                }
+            } catch (e) {
+                console.warn('Auto-refresh error:', e);
+            }
+        }
+
         // ======== INIT ========
         document.addEventListener('DOMContentLoaded', async () => {
             const loaded = await loadState();
@@ -3401,7 +3400,7 @@
                 }
             });
 
-            // ===== CREATE BUTTONS (подняты вверх) =====
+            // ===== CREATE BUTTONS =====
             document.getElementById('createChannelBtn').addEventListener('click', () => { closeModal();
                 showCreateChannel(); });
             document.getElementById('createGroupBtn').addEventListener('click', () => { closeModal();
@@ -3563,6 +3562,9 @@
                 document.getElementById('chatsBtn').classList.add('active');
                 closeChat();
             });
+
+            // ЗАПУСКАЕМ АВТООБНОВЛЕНИЕ КАЖДЫЕ 3 СЕКУНДЫ
+            setInterval(autoRefreshMessages, 3000);
         });
     </script>
 </body>
