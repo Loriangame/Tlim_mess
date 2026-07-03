@@ -4,7 +4,7 @@ const fs = require('fs');
 const path = require('path');
 
 const app = express();
-const PORT = 3000;
+const PORT = process.env.PORT || 3000;
 
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
@@ -27,6 +27,8 @@ function saveData(data) {
     fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
 }
 
+// ===== API =====
+
 // РЕГИСТРАЦИЯ
 app.post('/api/register', (req, res) => {
     console.log('📝 Регистрация:', req.body);
@@ -38,7 +40,6 @@ app.post('/api/register', (req, res) => {
     
     const data = loadData();
     
-    // Проверка на существование
     if (data.users.find(u => u.name === name)) {
         return res.status(400).json({ error: 'Имя уже занято' });
     }
@@ -76,10 +77,11 @@ app.post('/api/login', (req, res) => {
     res.json({ success: true, user: { id: user.id, name: user.name, email: user.email } });
 });
 
-// ПОЛУЧИТЬ ВСЕХ ПОЛЬЗОВАТЕЛЕЙ
+// ПОЛУЧИТЬ ВСЕХ ПОЛЬЗОВАТЕЛЕЙ (С ОТКЛЮЧЕНИЕМ КЕША)
 app.get('/api/users', (req, res) => {
     const data = loadData();
-    res.json(data.users.map(u => ({ id: u.id, name: u.name })));
+    res.set('Cache-Control', 'no-store, no-cache, must-revalidate, private');
+    res.json(data.users.map(u => ({ id: u.id, name: u.name, avatarColor: u.avatarColor })));
 });
 
 // ПОЛУЧИТЬ ЧАТЫ ПОЛЬЗОВАТЕЛЯ
@@ -87,13 +89,14 @@ app.get('/api/chats/:userId', (req, res) => {
     const data = loadData();
     const userId = req.params.userId;
     const userChats = data.chats.filter(c => c.participants.includes(userId));
+    res.set('Cache-Control', 'no-store, no-cache, must-revalidate, private');
     res.json(userChats);
 });
 
 // СОЗДАТЬ ЧАТ
 app.post('/api/chats', (req, res) => {
     console.log('💬 Создание чата:', req.body);
-    const { name, type, participants, creator, isPrivate } = req.body;
+    const { name, type, participants, creator, isPrivate, description } = req.body;
     const data = loadData();
     
     const chat = {
@@ -104,6 +107,7 @@ app.post('/api/chats', (req, res) => {
         isPrivate: isPrivate || false,
         created: Date.now(),
         creator: creator,
+        description: description || '',
         messages: []
     };
     
@@ -145,10 +149,11 @@ app.get('/api/messages/:chatId', (req, res) => {
     if (!chat) {
         return res.status(404).json({ error: 'Чат не найден' });
     }
+    res.set('Cache-Control', 'no-store, no-cache, must-revalidate, private');
     res.json(chat.messages);
 });
 
-app.listen(PORT, () => {
-    console.log(`🚀 Сервер запущен на http://localhost:${PORT}`);
+app.listen(PORT, '0.0.0.0', () => {
+    console.log(`🚀 Сервер запущен на порту ${PORT}`);
     console.log(`📁 Данные сохраняются в ${DATA_FILE}`);
 });
