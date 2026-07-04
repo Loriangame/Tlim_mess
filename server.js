@@ -3,6 +3,7 @@ const cors = require('cors');
 const fs = require('fs');
 const path = require('path');
 const WebSocket = require('ws');
+const nodemailer = require('nodemailer');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -12,6 +13,19 @@ app.use(express.json({ limit: '50mb' }));
 app.use(express.static('.'));
 
 const DATA_FILE = path.join(__dirname, 'data.json');
+
+// ===== НАСТРОЙКА ПОЧТЫ =====
+const transporter = nodemailer.createTransport({
+    service: 'yandex',
+    auth: {
+        user: process.env.EMAIL_USER || 'your-email@yandex.ru',
+        pass: process.env.EMAIL_PASS || 'your-app-password'
+    }
+});
+
+// ===== ВРЕМЕННОЕ ХРАНИЛИЩЕ =====
+const verificationCodes = {}; // email -> { code, expires, userData }
+const resetCodes = {}; // email -> { code, expires }
 
 // ===== ЗАГРУЗКА/СОХРАНЕНИЕ =====
 function loadData() {
@@ -31,30 +45,208 @@ function saveData(data) {
 
 // ===== API =====
 
-// РЕГИСТРАЦИЯ
-app.post('/api/register', (req, res) => {
-    const { name, email, password } = req.body;
-    if (!name || !email || !password) {
+// ОТПРАВКА КОДА ПОДТВЕРЖДЕНИЯ (РЕГИСТРАЦИЯ)
+app.post('/api/send-code', async (req, res) => {
+    const { name, email, phone, password } = req.body;
+    
+    if (!name || !password) {
         return res.status(400).json({ error: 'Заполните все поля' });
     }
+    
     const data = loadData();
+    
     if (data.users.find(u => u.name === name)) {
         return res.status(400).json({ error: 'Имя уже занято' });
     }
-    if (data.users.find(u => u.email === email)) {
+    
+    // Проверяем почту или телефон
+    if (email && data.users.find(u => u.email === email)) {
         return res.status(400).json({ error: 'Почта уже используется' });
     }
+    if (phone && data.users.find(u => u.phone === phone)) {
+        return res.status(400).json({ error: 'Телефон уже используется' });
+    }
+    
+    const code = Math.floor(100000 + Math.random() * 900000).toString();
+    const contact = email || phone;
+    const contactType = email ? 'email' : 'phone';
+    
+    verificationCodes[contact] = {
+        code: code,
+        expires: Date.now() + 5 * 60 * 1000,
+        userData: { name, email, phone, password }
+    };
+    
+    console.log(`📧 Код для ${contact}: ${code}`);
+    
+    try {
+        if (email) {
+            await transporter.sendMail({
+                from: process.env.EMAIL_USER || 'your-email@yandex.ru',
+                to: email,
+                subject: 'Код подтверждения для Tlim',
+                html: `
+                    <div style="font-family: Arial, sans-serif; max-width: 500px; margin: 0 auto; padding: 20px; background: #17212b; border-radius: 12px; color: #e1e9f0;">
+                        <h2 style="color: #64b5f6; text-align: center;">Tlim</h2>
+                        <p style="text-align: center; font-size: 16px;">Ваш код подтверждения:</p>
+                        <div style="text-align: center; font-size: 36px; font-weight: bold; letter-spacing: 10px; background: #0e1621; padding: 15px; border-radius: 10px; border: 2px dashed #64b5f6; color: #64b5f6; margin: 15px 0;">
+                            ${code}
+                        </div>
+                        <p style="text-align: center; color: #8e9fb1; font-size: 12px;">Код действителен 5 минут</p>
+                    </div>
+                `,
+                text: `Ваш код подтверждения для Tlim: ${code}\n\nКод действителен 5 минут`
+            });
+        } else if (phone) {
+            // Для телефона — просто логируем (в реальности нужно через SMS-шлюз)
+            console.log(`📱 Код для телефона ${phone}: ${code}`);
+        }
+        
+        res.json({ success: true, message: 'Код отправлен', contact, contactType });
+    } catch (error) {
+        console.error('❌ Ошибка отправки:', error);
+        res.status(500).json({ error: 'Не удалось отправить код' });
+    }
+});
+
+// ПРОВЕРКА КОДА И РЕГИСТРАЦИЯ
+app.post('/api/verify-code', (req, res) => {
+    const { contact, code } = req.body;
+    
+    if (!contact || !code) {
+        return res.status(400).json({ error: 'Введите код' });
+    }
+    
+    const record = verificationCodes[contact];
+    
+    if (!record) {
+        return res.status(400).json({ error: 'Код не найден. Запросите новый.' });
+    }
+    
+    if (Date.now() > record.expires) {
+        delete verificationCodes[contact];
+        return res.status(400).json({ error: 'Код истёк. Запросите новый.' });
+    }
+    
+    if (record.code !== code) {
+        return res.status(400).json({ error: 'Неверный код' });
+    }
+    
+    const data = loadData();
+    const { name, email, phone, password } = record.userData;
+    
+    if (data.users.find(u => u.name === name)) {
+        delete verificationCodes[contact];
+        return res.status(400).json({ error: 'Имя уже занято' });
+    }
+    
     const user = {
         id: Date.now().toString(36) + Math.random().toString(36).substring(2, 6),
         name: name,
-        email: email,
+        email: email || null,
+        phone: phone || null,
         password: password,
         created: Date.now(),
         avatar: null
     };
+    
     data.users.push(user);
     saveData(data);
-    res.json({ success: true, user: { id: user.id, name: user.name, email: user.email } });
+    
+    delete verificationCodes[contact];
+    
+    console.log(`✅ Пользователь зарегистрирован: ${name}`);
+    res.json({ success: true, user: { id: user.id, name: user.name, email: user.email, phone: user.phone } });
+});
+
+// ВОССТАНОВЛЕНИЕ ПАРОЛЯ — ОТПРАВКА КОДА
+app.post('/api/reset-password', async (req, res) => {
+    const { name, email } = req.body;
+    
+    if (!name || !email) {
+        return res.status(400).json({ error: 'Введите имя и почту' });
+    }
+    
+    const data = loadData();
+    const user = data.users.find(u => u.name === name && u.email === email);
+    
+    if (!user) {
+        return res.status(400).json({ error: 'Пользователь с таким именем и почтой не найден' });
+    }
+    
+    const code = Math.floor(100000 + Math.random() * 900000).toString();
+    
+    resetCodes[email] = {
+        code: code,
+        expires: Date.now() + 5 * 60 * 1000,
+        userId: user.id,
+        name: user.name
+    };
+    
+    console.log(`🔑 Код восстановления для ${email}: ${code}`);
+    
+    try {
+        await transporter.sendMail({
+            from: process.env.EMAIL_USER || 'your-email@yandex.ru',
+            to: email,
+            subject: 'Восстановление пароля Tlim',
+            html: `
+                <div style="font-family: Arial, sans-serif; max-width: 500px; margin: 0 auto; padding: 20px; background: #17212b; border-radius: 12px; color: #e1e9f0;">
+                    <h2 style="color: #64b5f6; text-align: center;">Tlim</h2>
+                    <p style="text-align: center; font-size: 16px;">Код для восстановления пароля:</p>
+                    <div style="text-align: center; font-size: 36px; font-weight: bold; letter-spacing: 10px; background: #0e1621; padding: 15px; border-radius: 10px; border: 2px dashed #64b5f6; color: #64b5f6; margin: 15px 0;">
+                        ${code}
+                    </div>
+                    <p style="text-align: center; color: #8e9fb1; font-size: 12px;">Код действителен 5 минут</p>
+                </div>
+            `,
+            text: `Код для восстановления пароля Tlim: ${code}\n\nКод действителен 5 минут`
+        });
+        
+        res.json({ success: true, message: 'Код отправлен на почту' });
+    } catch (error) {
+        console.error('❌ Ошибка отправки:', error);
+        res.status(500).json({ error: 'Не удалось отправить код' });
+    }
+});
+
+// ВОССТАНОВЛЕНИЕ ПАРОЛЯ — ПРОВЕРКА КОДА И СМЕНА ПАРОЛЯ
+app.post('/api/reset-password-verify', (req, res) => {
+    const { email, code, newPassword } = req.body;
+    
+    if (!email || !code || !newPassword) {
+        return res.status(400).json({ error: 'Заполните все поля' });
+    }
+    
+    const record = resetCodes[email];
+    
+    if (!record) {
+        return res.status(400).json({ error: 'Код не найден. Запросите новый.' });
+    }
+    
+    if (Date.now() > record.expires) {
+        delete resetCodes[email];
+        return res.status(400).json({ error: 'Код истёк. Запросите новый.' });
+    }
+    
+    if (record.code !== code) {
+        return res.status(400).json({ error: 'Неверный код' });
+    }
+    
+    const data = loadData();
+    const user = data.users.find(u => u.id === record.userId);
+    
+    if (!user) {
+        return res.status(400).json({ error: 'Пользователь не найден' });
+    }
+    
+    user.password = newPassword;
+    saveData(data);
+    
+    delete resetCodes[email];
+    
+    console.log(`✅ Пароль изменён для ${user.name}`);
+    res.json({ success: true, message: 'Пароль успешно изменён' });
 });
 
 // ВХОД
@@ -65,7 +257,7 @@ app.post('/api/login', (req, res) => {
     if (!user) {
         return res.status(400).json({ error: 'Неверное имя или пароль' });
     }
-    res.json({ success: true, user: { id: user.id, name: user.name, email: user.email, avatar: user.avatar } });
+    res.json({ success: true, user: { id: user.id, name: user.name, email: user.email, phone: user.phone, avatar: user.avatar } });
 });
 
 // ПОЛУЧИТЬ ВСЕХ ПОЛЬЗОВАТЕЛЕЙ
@@ -75,11 +267,12 @@ app.get('/api/users', (req, res) => {
     res.json(data.users.map(u => ({ 
         id: u.id, 
         name: u.name, 
-        avatar: u.avatar 
+        avatar: u.avatar,
+        phone: u.phone
     })));
 });
 
-// ПОЛУЧИТЬ ЧАТЫ ПОЛЬЗОВАТЕЛЯ
+// ПОЛУЧИТЬ ЧАТЫ
 app.get('/api/chats/:userId', (req, res) => {
     const data = loadData();
     const userId = req.params.userId;
@@ -137,7 +330,7 @@ app.put('/api/chats/:chatId', (req, res) => {
     res.json(chat);
 });
 
-// ОБНОВИТЬ АВАТАР ПОЛЬЗОВАТЕЛЯ
+// ОБНОВИТЬ АВАТАР
 app.post('/api/user/avatar', (req, res) => {
     const { userId, avatar } = req.body;
     const data = loadData();
@@ -162,29 +355,73 @@ app.delete('/api/chats/:chatId', (req, res) => {
 // ===== WebSocket =====
 const server = app.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Сервер запущен на порту ${PORT}`);
-    console.log(`📁 Данные сохраняются в ${DATA_FILE}`);
 });
 
 const wss = new WebSocket.Server({ server });
 const clients = new Map();
 
+// Храним WebRTC сигналы
+const callSignals = {};
+
 wss.on('connection', (ws, req) => {
-    console.log('🔗 Новое WebSocket подключение');
     let userId = null;
 
     ws.on('message', (message) => {
         try {
             const data = JSON.parse(message);
-            console.log('📨 WebSocket:', data.type);
-
+            
             switch (data.type) {
                 case 'auth':
                     userId = data.userId;
                     clients.set(userId, ws);
-                    console.log(`✅ Пользователь ${userId} авторизован`);
                     ws.send(JSON.stringify({ type: 'auth_success', userId }));
                     break;
-
+                    
+                case 'call_offer':
+                    // Пересылаем предложение звонка
+                    const targetWs = clients.get(data.targetUserId);
+                    if (targetWs && targetWs.readyState === WebSocket.OPEN) {
+                        targetWs.send(JSON.stringify({
+                            type: 'call_offer',
+                            from: userId,
+                            offer: data.offer,
+                            isVideo: data.isVideo || false
+                        }));
+                    }
+                    break;
+                    
+                case 'call_answer':
+                    const answerTarget = clients.get(data.targetUserId);
+                    if (answerTarget && answerTarget.readyState === WebSocket.OPEN) {
+                        answerTarget.send(JSON.stringify({
+                            type: 'call_answer',
+                            from: userId,
+                            answer: data.answer
+                        }));
+                    }
+                    break;
+                    
+                case 'ice_candidate':
+                    const iceTarget = clients.get(data.targetUserId);
+                    if (iceTarget && iceTarget.readyState === WebSocket.OPEN) {
+                        iceTarget.send(JSON.stringify({
+                            type: 'ice_candidate',
+                            from: userId,
+                            candidate: data.candidate
+                        }));
+                    }
+                    break;
+                    
+                case 'call_end':
+                    const endTarget = clients.get(data.targetUserId);
+                    if (endTarget && endTarget.readyState === WebSocket.OPEN) {
+                        endTarget.send(JSON.stringify({
+                            type: 'call_end',
+                            from: userId
+                        }));
+                    }
+                    break;
+                    
                 case 'new_message':
                     const fileData = loadData();
                     const chat = fileData.chats.find(c => c.id === data.chatId);
@@ -203,11 +440,10 @@ wss.on('connection', (ws, req) => {
                         };
                         chat.messages.push(msg);
                         saveData(fileData);
-                        
-                        chat.participants.forEach(participantId => {
-                            const clientWs = clients.get(participantId);
-                            if (clientWs && clientWs.readyState === WebSocket.OPEN) {
-                                clientWs.send(JSON.stringify({
+                        chat.participants.forEach(pid => {
+                            const c = clients.get(pid);
+                            if (c && c.readyState === WebSocket.OPEN) {
+                                c.send(JSON.stringify({
                                     type: 'new_message',
                                     chatId: data.chatId,
                                     message: msg
@@ -216,63 +452,21 @@ wss.on('connection', (ws, req) => {
                         });
                     }
                     break;
-
-                case 'typing':
-                    const typingData = loadData();
-                    const typingChat = typingData.chats.find(c => c.id === data.chatId);
-                    if (typingChat) {
-                        typingChat.participants.forEach(participantId => {
-                            const clientWs = clients.get(participantId);
-                            if (clientWs && clientWs.readyState === WebSocket.OPEN && participantId !== userId) {
-                                clientWs.send(JSON.stringify({
-                                    type: 'typing',
-                                    chatId: data.chatId,
-                                    userId: userId,
-                                    isTyping: data.isTyping
-                                }));
-                            }
-                        });
-                    }
-                    break;
-
-                case 'delete_message':
-                    const deleteData = loadData();
-                    const deleteChat = deleteData.chats.find(c => c.id === data.chatId);
-                    if (deleteChat) {
-                        deleteChat.messages = deleteChat.messages.filter(m => m.id !== data.msgId);
-                        if (deleteChat.pinnedMessages) {
-                            deleteChat.pinnedMessages = deleteChat.pinnedMessages.filter(id => id !== data.msgId);
-                        }
-                        saveData(deleteData);
-                        deleteChat.participants.forEach(participantId => {
-                            const clientWs = clients.get(participantId);
-                            if (clientWs && clientWs.readyState === WebSocket.OPEN) {
-                                clientWs.send(JSON.stringify({
-                                    type: 'message_deleted',
-                                    chatId: data.chatId,
-                                    msgId: data.msgId
-                                }));
-                            }
-                        });
-                    }
-                    break;
                     
-                case 'update_chat':
-                    const updateData = loadData();
-                    const updateChat = updateData.chats.find(c => c.id === data.chatId);
-                    if (updateChat) {
-                        if (data.name) updateChat.name = data.name;
-                        if (data.description !== undefined) updateChat.description = data.description;
-                        if (data.avatar !== undefined) updateChat.avatar = data.avatar;
-                        saveData(updateData);
-                        updateChat.participants.forEach(participantId => {
-                            const clientWs = clients.get(participantId);
-                            if (clientWs && clientWs.readyState === WebSocket.OPEN) {
-                                clientWs.send(JSON.stringify({
-                                    type: 'chat_updated',
-                                    chatId: data.chatId,
-                                    chat: updateChat
-                                }));
+                case 'typing':
+                    const typingChat = loadData().chats.find(c => c.id === data.chatId);
+                    if (typingChat) {
+                        typingChat.participants.forEach(pid => {
+                            if (pid !== userId) {
+                                const c = clients.get(pid);
+                                if (c && c.readyState === WebSocket.OPEN) {
+                                    c.send(JSON.stringify({
+                                        type: 'typing',
+                                        chatId: data.chatId,
+                                        userId: userId,
+                                        isTyping: data.isTyping
+                                    }));
+                                }
                             }
                         });
                     }
@@ -284,11 +478,6 @@ wss.on('connection', (ws, req) => {
     });
 
     ws.on('close', () => {
-        console.log(`🔌 WebSocket отключен (${userId || 'неизвестный'})`);
         if (userId) clients.delete(userId);
-    });
-
-    ws.on('error', (error) => {
-        console.error('WebSocket ошибка:', error);
     });
 });
