@@ -1,7 +1,7 @@
 {
-    "name": "tlim",
+    "name": "utopia",
     "version": "1.0.0",
-    "description": "Tlim Messenger with WebSocket, Email, Calls",
+    "description": "Utopia Messenger with WebSocket, Email, Calls",
     "scripts": {
         "start": "node server.js"
     },
