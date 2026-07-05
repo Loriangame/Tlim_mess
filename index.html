@@ -410,8 +410,7 @@
                 </div>
             </div>
         </div>
-
-        <!-- MAIN APP -->
+                <!-- MAIN APP -->
         <div id="mainApp">
             <div id="topHeader">
                 <div class="header-left">
@@ -531,6 +530,7 @@
             </div>
         </div>
     </div>
+
     <script>
     // ======== STATE ========
     let state = {
@@ -669,7 +669,25 @@
                 headers: { 'Cache-Control': 'no-cache' }
             });
             const chats = await response.json();
+            
+            // Сохраняем локальные имена, если они были изменены
+            const localNames = {};
+            state.chats.forEach(c => {
+                if (c._customName) {
+                    localNames[c.id] = c._customName;
+                }
+            });
+            
             state.chats = chats;
+            
+            // Восстанавливаем кастомные имена
+            state.chats.forEach(c => {
+                if (localNames[c.id]) {
+                    c.name = localNames[c.id];
+                    c._customName = localNames[c.id];
+                }
+            });
+            
             for (let chat of state.chats) {
                 const msgsResponse = await fetch('/api/messages/' + chat.id);
                 chat.messages = await msgsResponse.json();
@@ -746,7 +764,6 @@
                     state.chats.push(result.chat);
                     renderChatList();
                     openChat(result.chat.id);
-                    // Убираем параметр из URL
                     window.history.replaceState({}, document.title, window.location.pathname);
                 } else {
                     alert('❌ ' + result.error);
@@ -935,7 +952,6 @@
         callTarget = targetUserId;
         isVideoCall = isVideo;
         
-        // Получаем имя собеседника
         const user = state.allUsers.find(u => u.id === targetUserId);
         const userName = user ? user.name : 'собеседник';
         
@@ -1256,7 +1272,6 @@
 
         container.classList.add('show');
     }
-
     // ======== RENDER ========
     function renderChatList() {
         const container = document.getElementById('chatList');
@@ -1298,7 +1313,7 @@
                     ${chat.isBlocked ? '<span class="blocked-badge">🚫</span>' : ''}
                 </div>
                 <div class="chat-info">
-                    <div class="chat-name">${getChatName(chat)}</div>
+                    <div class="chat-name" id="chatName_${chat.id}">${getChatName(chat)}</div>
                     <div class="chat-last">${lastText}</div>
                 </div>
                 ${lastTime ? `<div class="chat-time">${lastTime}</div>` : ''}
@@ -1309,6 +1324,12 @@
                 </div>
             `;
             div.dataset.id = chat.id;
+            
+            // ===== ДВОЙНОЙ КЛИК ДЛЯ ПЕРЕИМЕНОВАНИЯ =====
+            div.addEventListener('dblclick', () => {
+                renameChat(chat.id);
+            });
+            
             div.addEventListener('click', () => openChat(chat.id));
             container.appendChild(div);
         });
@@ -1421,6 +1442,50 @@
         container.scrollTop = container.scrollHeight;
     }
 
+    // ======== ПЕРЕИМЕНОВАНИЕ ЧАТА ========
+    async function renameChat(chatId) {
+        const chat = getChat(chatId);
+        if (!chat) return;
+        
+        const isPersonal = chat.type === 'chat' && chat.participants && chat.participants.length === 2;
+        
+        let newName = prompt(
+            isPersonal ? 
+            'Введите новое имя для чата (будет отображаться у вас):' : 
+            'Введите новое название:',
+            chat.name
+        );
+        
+        if (!newName || newName.trim() === '') return;
+        newName = newName.trim();
+        
+        chat.name = newName;
+        chat._customName = newName;
+        saveState();
+        renderChatList();
+        if (state.currentChatId === chatId) {
+            updateChatHeader();
+        }
+        
+        try {
+            await fetch('/api/chats/' + chat.id, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name: newName })
+            });
+        } catch (e) {
+            console.warn('Ошибка обновления имени:', e);
+        }
+        
+        if (wsConnected && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({
+                type: 'update_chat',
+                chatId: chat.id,
+                name: newName
+            }));
+        }
+    }
+
     // ======== CHAT ACTIONS ========
     function deleteChat(chatId) {
         const chat = getChat(chatId);
@@ -1436,7 +1501,6 @@
         const chat = getChat(chatId);
         if (!chat) return;
         
-        // Генерируем код приглашения, если его нет
         if (!chat.inviteCode) {
             chat.inviteCode = generateId();
             try {
@@ -1601,50 +1665,23 @@
         }
     }
 
-    // ======== АВАТАРКА ЧАТА ========
-    function handleChatAvatarUpload() {
-        document.getElementById('chatAvatarInput').click();
-    }
-
-    document.getElementById('chatAvatarInput')?.addEventListener('change', async (e) => {
-        if (e.target.files.length) {
-            const file = e.target.files[0];
-            if (!file.type.startsWith('image/')) {
-                alert('Выберите изображение');
-                return;
-            }
-            const reader = new FileReader();
-            reader.onload = async (ev) => {
-                const chat = getChat(state.currentChatId);
-                if (chat) {
-                    chat.avatar = ev.target.result;
-                    saveState();
-                    renderChatList();
-                    updateChatHeader();
-                    await updateChatAvatar(chat.id, chat.avatar);
-                    if (wsConnected && ws.readyState === WebSocket.OPEN) {
-                        ws.send(JSON.stringify({
-                            type: 'update_chat',
-                            chatId: chat.id,
-                            avatar: chat.avatar
-                        }));
-                    }
-                    alert('✅ Аватарка обновлена!');
-                }
-            };
-            reader.readAsDataURL(file);
-        }
-        e.target.value = '';
-    });
-
-    // ======== СОЗДАНИЕ ЧАТА ========
+    // ======== СОЗДАНИЕ ЧАТА (С ПРАВИЛЬНЫМ ИМЕНЕМ) ========
     async function createChat(type, name, participants, creator, isPrivate, description, avatar) {
         try {
+            let chatName = name || 'Чат';
+            if (type === 'chat' && participants && participants.length === 2) {
+                const otherId = participants.find(id => id !== creator);
+                const otherUser = state.allUsers.find(u => u.id === otherId);
+                if (otherUser) {
+                    chatName = otherUser.name;
+                }
+            }
+            
             const response = await fetch('/api/chats', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    name: name || 'Чат',
+                    name: chatName,
                     type: type || 'chat',
                     participants: participants || [creator],
                     creator: creator || state.user?.id,
@@ -1655,6 +1692,7 @@
             });
             const newChat = await response.json();
             state.chats.push(newChat);
+            
             if (type === 'channel') {
                 addSystemMessage(newChat.id, `📢 Канал "${newChat.name}" создан!`);
             } else if (type === 'group') {
@@ -1715,6 +1753,42 @@
         input.disabled = isChatBlocked(chat.id);
         input.placeholder = isChatBlocked(chat.id) ? '🚫 Чат заблокирован' : 'Сообщение...';
     }
+
+    // ======== АВАТАРКА ЧАТА ========
+    function handleChatAvatarUpload() {
+        document.getElementById('chatAvatarInput').click();
+    }
+
+    document.getElementById('chatAvatarInput')?.addEventListener('change', async (e) => {
+        if (e.target.files.length) {
+            const file = e.target.files[0];
+            if (!file.type.startsWith('image/')) {
+                alert('Выберите изображение');
+                return;
+            }
+            const reader = new FileReader();
+            reader.onload = async (ev) => {
+                const chat = getChat(state.currentChatId);
+                if (chat) {
+                    chat.avatar = ev.target.result;
+                    saveState();
+                    renderChatList();
+                    updateChatHeader();
+                    await updateChatAvatar(chat.id, chat.avatar);
+                    if (wsConnected && ws.readyState === WebSocket.OPEN) {
+                        ws.send(JSON.stringify({
+                            type: 'update_chat',
+                            chatId: chat.id,
+                            avatar: chat.avatar
+                        }));
+                    }
+                    alert('✅ Аватарка обновлена!');
+                }
+            };
+            reader.readAsDataURL(file);
+        }
+        e.target.value = '';
+    });
 
     // ======== VOICE RECORDING ========
     function startVoiceRecording() {
