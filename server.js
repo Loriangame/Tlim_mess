@@ -4,7 +4,6 @@ const fs = require('fs');
 const path = require('path');
 const WebSocket = require('ws');
 
-// Проверяем наличие nodemailer
 let nodemailer;
 try {
     nodemailer = require('nodemailer');
@@ -22,7 +21,6 @@ app.use(express.static('.'));
 
 const DATA_FILE = path.join(__dirname, 'data.json');
 
-// ===== АВТОМАТИЧЕСКАЯ НАСТРОЙКА ПОЧТЫ =====
 const emailUser = process.env.EMAIL_USER || '';
 const emailPass = process.env.EMAIL_PASS || '';
 
@@ -58,11 +56,9 @@ if (!emailConfigured) {
     console.log('📧 КОДЫ БУДУТ ПОКАЗЫВАТЬСЯ В ИНТЕРФЕЙСЕ');
 }
 
-// ===== ВРЕМЕННОЕ ХРАНИЛИЩЕ =====
 const verificationCodes = {};
 const resetCodes = {};
 
-// ===== ЗАГРУЗКА/СОХРАНЕНИЕ =====
 function loadData() {
     try {
         if (fs.existsSync(DATA_FILE)) {
@@ -78,7 +74,6 @@ function saveData(data) {
     fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
 }
 
-// ===== ОТПРАВКА ПИСЬМА =====
 async function sendEmail(to, subject, html, text) {
     if (!emailConfigured || !transporter) {
         const codeMatch = html ? html.match(/(\d{6})/) : null;
@@ -585,14 +580,12 @@ wss.on('connection', (ws, req) => {
                             time: Date.now()
                         };
                         
-                        // Проверяем, есть ли уже такое сообщение
                         const exists = chat.messages.some(m => m.id === msg.id);
                         if (!exists) {
                             chat.messages.push(msg);
                             saveData(fileData);
                         }
                         
-                        // Отправляем ВСЕМ участникам, КРОМЕ отправителя
                         chat.participants.forEach(pid => {
                             if (pid === data.sender) return;
                             const c = clients.get(pid);
@@ -641,6 +634,28 @@ wss.on('connection', (ws, req) => {
                                     type: 'chat_updated',
                                     chatId: data.chatId,
                                     chat: updateChat
+                                }));
+                            }
+                        });
+                    }
+                    break;
+                    
+                case 'delete_message':
+                    const delData = loadData();
+                    const delChat = delData.chats.find(c => c.id === data.chatId);
+                    if (delChat) {
+                        delChat.messages = delChat.messages.filter(m => m.id !== data.msgId);
+                        if (delChat.pinnedMessages) {
+                            delChat.pinnedMessages = delChat.pinnedMessages.filter(id => id !== data.msgId);
+                        }
+                        saveData(delData);
+                        delChat.participants.forEach(pid => {
+                            const c = clients.get(pid);
+                            if (c && c.readyState === WebSocket.OPEN) {
+                                c.send(JSON.stringify({
+                                    type: 'message_deleted',
+                                    chatId: data.chatId,
+                                    msgId: data.msgId
                                 }));
                             }
                         });
