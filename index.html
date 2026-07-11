@@ -265,7 +265,7 @@
             #chatViewHeader .cv-actions #chatMoreBtn{display:flex!important}
         }
 
-        /* Desktop - увеличенные кнопки и фикс уплывания */
+        /* Desktop */
         @media (min-width:769px){
             #mainApp{display:flex!important;flex-direction:row!important;height:100vh;overflow:hidden}
             #chatListContainer{width:20%!important;height:100vh!important;border-right:1px solid #2b3b4a;overflow-y:auto;flex:none!important}
@@ -277,7 +277,6 @@
             #moreBtn{display:none!important}
             .input-wrapper .btn-icon.hide-on-mobile{display:flex!important}
             
-            /* Увеличенные кнопки */
             #chatViewHeader .cv-actions button{
                 display:flex!important;
                 font-size:20px!important;
@@ -324,6 +323,11 @@
         .btn-send img{width:22px;height:22px;object-fit:contain}
         .cv-actions button img{width:20px;height:20px;object-fit:contain}
         #moreMenu button img{width:20px;height:20px;object-fit:contain}
+        
+        /* Loading spinner */
+        .loading-spinner{display:flex;justify-content:center;align-items:center;height:100%;color:#8e9fb1;font-size:14px;padding:40px 0}
+        .loading-spinner::after{content:'⏳';font-size:24px;margin-right:8px;animation:spin 1s linear infinite}
+        @keyframes spin{0%{transform:rotate(0deg)}100%{transform:rotate(360deg)}}
     </style>
 </head>
 <body>
@@ -421,7 +425,7 @@
                 <button class="create-btn btn-settings" id="settingsBtn">⚙️ Настройки</button>
             </div>
 
-            <div id="chatListContainer"><div id="chatList"></div></div>
+            <div id="chatListContainer"><div id="chatList"><div class="loading-spinner">Загрузка чатов...</div></div></div>
 
             <div id="bottomBar">
                 <button class="bottom-btn active" id="chatsBtn"><span>💬</span><span class="btn-label">Чаты</span></button>
@@ -710,8 +714,12 @@
             });
             
             for (let chat of state.chats) {
-                const msgsResponse = await fetch('/api/messages/' + chat.id);
-                chat.messages = await msgsResponse.json();
+                try {
+                    const msgsResponse = await fetch('/api/messages/' + chat.id);
+                    chat.messages = await msgsResponse.json();
+                } catch(e) {
+                    chat.messages = [];
+                }
             }
             return true;
         } catch (e) {
@@ -909,6 +917,8 @@
             ws.onclose = () => {
                 console.log('🔌 WebSocket отключен');
                 wsConnected = false;
+                wsReconnectAttempts++;
+                setTimeout(connectWebSocket, 3000);
             };
             
             ws.onerror = (error) => {
@@ -2794,7 +2804,7 @@
             if (!e.target.closest('.search-wrap')) document.getElementById('searchResults').classList.remove('show');
         });
 
-        // Create buttons with modals (центрированные окошки)
+        // Create buttons with modals
         document.getElementById('createChannelBtn').addEventListener('click', () => {
             openModal('📢 Создание канала', `
                 <label class="modal-label">Название канала</label>
