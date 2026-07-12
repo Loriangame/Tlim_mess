@@ -4,7 +4,6 @@ const fs = require('fs');
 const path = require('path');
 const WebSocket = require('ws');
 
-// Проверяем наличие nodemailer
 let nodemailer;
 try {
     nodemailer = require('nodemailer');
@@ -22,7 +21,7 @@ app.use(express.static('.'));
 
 const DATA_FILE = path.join(__dirname, 'data.json');
 
-// ===== АВТОМАТИЧЕСКАЯ НАСТРОЙКА ПОЧТЫ =====
+// ===== ПОЧТА =====
 const emailUser = process.env.EMAIL_USER || '';
 const emailPass = process.env.EMAIL_PASS || '';
 
@@ -33,10 +32,7 @@ if (nodemailer && emailUser && emailPass && emailPass.length > 3) {
     try {
         transporter = nodemailer.createTransport({
             service: 'yandex',
-            auth: {
-                user: emailUser,
-                pass: emailPass
-            }
+            auth: { user: emailUser, pass: emailPass }
         });
         transporter.verify(function(error, success) {
             if (error) {
@@ -58,11 +54,10 @@ if (!emailConfigured) {
     console.log('📧 КОДЫ БУДУТ ПОКАЗЫВАТЬСЯ В ИНТЕРФЕЙСЕ');
 }
 
-// ===== ВРЕМЕННОЕ ХРАНИЛИЩЕ =====
+// ===== ДАННЫЕ =====
 const verificationCodes = {};
 const resetCodes = {};
 
-// ===== ЗАГРУЗКА/СОХРАНЕНИЕ =====
 function loadData() {
     try {
         if (fs.existsSync(DATA_FILE)) {
@@ -86,7 +81,6 @@ async function sendEmail(to, subject, html, text) {
         console.log(`📧 [ЛОГ] Код для ${to}: ${code || 'не найден'}`);
         return false;
     }
-    
     try {
         const result = await transporter.sendMail({
             from: emailUser,
@@ -105,7 +99,6 @@ async function sendEmail(to, subject, html, text) {
 
 // ===== API =====
 
-// ОТПРАВКА КОДА ПОДТВЕРЖДЕНИЯ
 app.post('/api/send-code', async (req, res) => {
     console.log('📨 Запрос на отправку кода:', req.body);
     const { name, email, phone, password } = req.body;
@@ -119,14 +112,12 @@ app.post('/api/send-code', async (req, res) => {
     if (data.users.find(u => u.name === name)) {
         return res.status(400).json({ error: 'Имя уже занято' });
     }
-    
     if (email && data.users.find(u => u.email === email)) {
         return res.status(400).json({ error: 'Почта уже используется' });
     }
     if (phone && data.users.find(u => u.phone === phone)) {
         return res.status(400).json({ error: 'Телефон уже используется' });
     }
-    
     if (!email && !phone) {
         return res.status(400).json({ error: 'Укажите почту или телефон' });
     }
@@ -143,7 +134,6 @@ app.post('/api/send-code', async (req, res) => {
     console.log(`📧 КОД ДЛЯ ${contact}: ${code}`);
     
     let emailSent = false;
-    
     if (email && emailConfigured) {
         const html = `
             <div style="font-family: Arial, sans-serif; max-width: 500px; margin: 0 auto; padding: 20px; background: #17212b; border-radius: 12px; color: #e1e9f0;">
@@ -176,7 +166,6 @@ app.post('/api/send-code', async (req, res) => {
     res.json(response);
 });
 
-// ПРОВЕРКА КОДА И РЕГИСТРАЦИЯ
 app.post('/api/verify-code', (req, res) => {
     const { contact, code } = req.body;
     console.log('🔍 Проверка кода:', { contact, code });
@@ -186,16 +175,13 @@ app.post('/api/verify-code', (req, res) => {
     }
     
     const record = verificationCodes[contact];
-    
     if (!record) {
         return res.status(400).json({ error: 'Код не найден. Запросите новый.' });
     }
-    
     if (Date.now() > record.expires) {
         delete verificationCodes[contact];
         return res.status(400).json({ error: 'Код истёк. Запросите новый.' });
     }
-    
     if (record.code !== code) {
         return res.status(400).json({ error: 'Неверный код' });
     }
@@ -226,16 +212,12 @@ app.post('/api/verify-code', (req, res) => {
     res.json({ success: true, user: { id: user.id, name: user.name, email: user.email, phone: user.phone } });
 });
 
-// РЕГИСТРАЦИЯ (ПРЯМАЯ)
 app.post('/api/register', (req, res) => {
     const { name, email, phone, password } = req.body;
-    
     if (!name || !password) {
         return res.status(400).json({ error: 'Заполните имя и пароль' });
     }
-    
     const data = loadData();
-    
     if (data.users.find(u => u.name === name)) {
         return res.status(400).json({ error: 'Имя уже занято' });
     }
@@ -245,7 +227,6 @@ app.post('/api/register', (req, res) => {
     if (phone && data.users.find(u => u.phone === phone)) {
         return res.status(400).json({ error: 'Телефон уже используется' });
     }
-    
     const user = {
         id: Date.now().toString(36) + Math.random().toString(36).substring(2, 6),
         name: name,
@@ -255,42 +236,31 @@ app.post('/api/register', (req, res) => {
         created: Date.now(),
         avatar: null
     };
-    
     data.users.push(user);
     saveData(data);
-    
     console.log(`✅ Пользователь зарегистрирован: ${name}`);
     res.json({ success: true, user: { id: user.id, name: user.name, email: user.email, phone: user.phone } });
 });
 
-// ВОССТАНОВЛЕНИЕ ПАРОЛЯ
 app.post('/api/reset-password', async (req, res) => {
     const { name, email } = req.body;
-    
     if (!name || !email) {
         return res.status(400).json({ error: 'Введите имя и почту' });
     }
-    
     const data = loadData();
     const user = data.users.find(u => u.name === name && u.email === email);
-    
     if (!user) {
         return res.status(400).json({ error: 'Пользователь не найден' });
     }
-    
     const code = Math.floor(100000 + Math.random() * 900000).toString();
-    
     resetCodes[email] = {
         code: code,
         expires: Date.now() + 5 * 60 * 1000,
         userId: user.id,
         name: user.name
     };
-    
     console.log(`🔑 Код восстановления для ${email}: ${code}`);
-    
     let emailSent = false;
-    
     if (emailConfigured) {
         const html = `
             <div style="font-family: Arial, sans-serif; max-width: 500px; margin: 0 auto; padding: 20px; background: #17212b; border-radius: 12px; color: #e1e9f0;">
@@ -305,7 +275,6 @@ app.post('/api/reset-password', async (req, res) => {
         const text = `Код для восстановления пароля Utopia: ${code}\n\nКод действителен 5 минут`;
         emailSent = await sendEmail(email, 'Восстановление пароля Utopia', html, text);
     }
-    
     res.json({ 
         success: true, 
         message: emailSent ? 'Код отправлен на почту' : 'Код создан (письмо не отправлено)',
@@ -313,45 +282,34 @@ app.post('/api/reset-password', async (req, res) => {
     });
 });
 
-// ВОССТАНОВЛЕНИЕ ПАРОЛЯ — ПРОВЕРКА КОДА
 app.post('/api/reset-password-verify', (req, res) => {
     const { email, code, newPassword } = req.body;
-    
     if (!email || !code || !newPassword) {
         return res.status(400).json({ error: 'Заполните все поля' });
     }
-    
     const record = resetCodes[email];
-    
     if (!record) {
         return res.status(400).json({ error: 'Код не найден' });
     }
-    
     if (Date.now() > record.expires) {
         delete resetCodes[email];
         return res.status(400).json({ error: 'Код истёк' });
     }
-    
     if (record.code !== code) {
         return res.status(400).json({ error: 'Неверный код' });
     }
-    
     const data = loadData();
     const user = data.users.find(u => u.id === record.userId);
-    
     if (!user) {
         return res.status(400).json({ error: 'Пользователь не найден' });
     }
-    
     user.password = newPassword;
     saveData(data);
     delete resetCodes[email];
-    
     console.log(`✅ Пароль изменён для ${user.name}`);
     res.json({ success: true, message: 'Пароль успешно изменён' });
 });
 
-// ВХОД
 app.post('/api/login', (req, res) => {
     const { name, password } = req.body;
     const data = loadData();
@@ -362,14 +320,12 @@ app.post('/api/login', (req, res) => {
     res.json({ success: true, user: { id: user.id, name: user.name, email: user.email, phone: user.phone, avatar: user.avatar } });
 });
 
-// ПОЛУЧИТЬ ВСЕХ ПОЛЬЗОВАТЕЛЕЙ
 app.get('/api/users', (req, res) => {
     const data = loadData();
     res.set('Cache-Control', 'no-store, no-cache, must-revalidate, private');
     res.json(data.users.map(u => ({ id: u.id, name: u.name, avatar: u.avatar, phone: u.phone })));
 });
 
-// ПОЛУЧИТЬ ЧАТЫ
 app.get('/api/chats/:userId', (req, res) => {
     const data = loadData();
     const userId = req.params.userId;
@@ -378,7 +334,6 @@ app.get('/api/chats/:userId', (req, res) => {
     res.json(userChats);
 });
 
-// ПОЛУЧИТЬ СООБЩЕНИЯ ЧАТА
 app.get('/api/messages/:chatId', (req, res) => {
     const data = loadData();
     const chat = data.chats.find(c => c.id === req.params.chatId);
@@ -389,7 +344,6 @@ app.get('/api/messages/:chatId', (req, res) => {
     res.json(chat.messages || []);
 });
 
-// СОЗДАТЬ ЧАТ
 app.post('/api/chats', (req, res) => {
     const { name, type, participants, creator, isPrivate, description, avatar } = req.body;
     const data = loadData();
@@ -412,10 +366,9 @@ app.post('/api/chats', (req, res) => {
     res.json(chat);
 });
 
-// ОБНОВИТЬ ЧАТ
 app.put('/api/chats/:chatId', (req, res) => {
     const { chatId } = req.params;
-    const { name, description, avatar, inviteCode } = req.body;
+    const { name, description, avatar, inviteCode, participants } = req.body;
     const data = loadData();
     const chat = data.chats.find(c => c.id === chatId);
     if (!chat) {
@@ -425,39 +378,31 @@ app.put('/api/chats/:chatId', (req, res) => {
     if (description !== undefined) chat.description = description;
     if (avatar !== undefined) chat.avatar = avatar;
     if (inviteCode !== undefined) chat.inviteCode = inviteCode;
+    if (participants !== undefined) chat.participants = participants;
     saveData(data);
     res.json(chat);
 });
 
-// ПРИСОЕДИНИТЬСЯ К ЧАТУ ПО КОДУ
 app.post('/api/join-chat', (req, res) => {
     const { inviteCode, userId } = req.body;
-    
     if (!inviteCode || !userId) {
         return res.status(400).json({ error: 'Не указан код или пользователь' });
     }
-    
     const data = loadData();
     const chat = data.chats.find(c => c.inviteCode === inviteCode);
-    
     if (!chat) {
         return res.status(404).json({ error: 'Неверный код приглашения' });
     }
-    
     if (!chat.participants) chat.participants = [];
-    
     if (chat.participants.includes(userId)) {
         return res.status(400).json({ error: 'Вы уже в этом чате' });
     }
-    
     chat.participants.push(userId);
     saveData(data);
-    
     console.log(`✅ Пользователь ${userId} присоединился к чату ${chat.id}`);
     res.json({ success: true, chat: chat });
 });
 
-// ОБНОВИТЬ АВАТАР
 app.post('/api/user/avatar', (req, res) => {
     const { userId, avatar } = req.body;
     const data = loadData();
@@ -470,7 +415,6 @@ app.post('/api/user/avatar', (req, res) => {
     res.json({ success: true });
 });
 
-// УДАЛИТЬ ЧАТ
 app.delete('/api/chats/:chatId', (req, res) => {
     const { chatId } = req.params;
     const data = loadData();
@@ -492,6 +436,7 @@ const wss = new WebSocket.Server({
 });
 
 const clients = new Map();
+const groupCalls = new Map(); // roomId -> { participants: [], offer: null }
 
 wss.on('connection', (ws, req) => {
     let userId = null;
@@ -512,13 +457,33 @@ wss.on('connection', (ws, req) => {
                     
                 case 'call_offer':
                     console.log(`📞 Звонок от ${userId} к ${data.targetUserId}, видео: ${data.isVideo}`);
+                    
+                    // Сохраняем информацию о групповом звонке
+                    if (data.roomId) {
+                        if (!groupCalls.has(data.roomId)) {
+                            groupCalls.set(data.roomId, {
+                                participants: [userId, data.targetUserId, ...(data.participants || [])],
+                                offer: data.offer,
+                                isVideo: data.isVideo
+                            });
+                        } else {
+                            const call = groupCalls.get(data.roomId);
+                            if (!call.participants.includes(userId)) {
+                                call.participants.push(userId);
+                            }
+                        }
+                    }
+                    
+                    // Отправляем оффер целевым пользователям
                     const targetWs = clients.get(data.targetUserId);
                     if (targetWs && targetWs.readyState === WebSocket.OPEN) {
                         targetWs.send(JSON.stringify({
                             type: 'call_offer',
                             from: userId,
                             offer: data.offer,
-                            isVideo: data.isVideo || false
+                            isVideo: data.isVideo || false,
+                            roomId: data.roomId || null,
+                            participants: data.participants || []
                         }));
                         console.log(`📞 Оффер отправлен ${data.targetUserId}`);
                     } else {
@@ -527,6 +492,26 @@ wss.on('connection', (ws, req) => {
                             type: 'call_error',
                             message: 'Пользователь не в сети'
                         }));
+                    }
+                    
+                    // Отправляем уведомление всем участникам группы
+                    if (data.participants && data.participants.length > 0) {
+                        data.participants.forEach(pid => {
+                            if (pid !== data.targetUserId && pid !== userId) {
+                                const pWs = clients.get(pid);
+                                if (pWs && pWs.readyState === WebSocket.OPEN) {
+                                    pWs.send(JSON.stringify({
+                                        type: 'call_offer',
+                                        from: userId,
+                                        offer: data.offer,
+                                        isVideo: data.isVideo || false,
+                                        roomId: data.roomId || null,
+                                        participants: [userId, data.targetUserId]
+                                    }));
+                                    console.log(`📞 Оффер отправлен участнику ${pid}`);
+                                }
+                            }
+                        });
                     }
                     break;
                     
@@ -537,7 +522,8 @@ wss.on('connection', (ws, req) => {
                         answerTarget.send(JSON.stringify({
                             type: 'call_answer',
                             from: userId,
-                            answer: data.answer
+                            answer: data.answer,
+                            roomId: data.roomId || null
                         }));
                         console.log(`📞 Ответ отправлен ${data.targetUserId}`);
                     }
@@ -550,8 +536,26 @@ wss.on('connection', (ws, req) => {
                         iceTarget.send(JSON.stringify({
                             type: 'ice_candidate',
                             from: userId,
-                            candidate: data.candidate
+                            candidate: data.candidate,
+                            roomId: data.roomId || null
                         }));
+                    }
+                    // Отправляем ICE кандидаты всем участникам группы
+                    if (data.roomId && groupCalls.has(data.roomId)) {
+                        const call = groupCalls.get(data.roomId);
+                        call.participants.forEach(pid => {
+                            if (pid !== userId) {
+                                const pWs = clients.get(pid);
+                                if (pWs && pWs.readyState === WebSocket.OPEN) {
+                                    pWs.send(JSON.stringify({
+                                        type: 'ice_candidate',
+                                        from: userId,
+                                        candidate: data.candidate,
+                                        roomId: data.roomId || null
+                                    }));
+                                }
+                            }
+                        });
                     }
                     break;
                     
@@ -561,8 +565,26 @@ wss.on('connection', (ws, req) => {
                     if (endTarget && endTarget.readyState === WebSocket.OPEN) {
                         endTarget.send(JSON.stringify({
                             type: 'call_end',
-                            from: userId
+                            from: userId,
+                            roomId: data.roomId || null
                         }));
+                    }
+                    // Удаляем групповой звонок
+                    if (data.roomId && groupCalls.has(data.roomId)) {
+                        const call = groupCalls.get(data.roomId);
+                        call.participants.forEach(pid => {
+                            if (pid !== userId && pid !== data.targetUserId) {
+                                const pWs = clients.get(pid);
+                                if (pWs && pWs.readyState === WebSocket.OPEN) {
+                                    pWs.send(JSON.stringify({
+                                        type: 'call_end',
+                                        from: userId,
+                                        roomId: data.roomId || null
+                                    }));
+                                }
+                            }
+                        });
+                        groupCalls.delete(data.roomId);
                     }
                     break;
                     
@@ -582,6 +604,7 @@ wss.on('connection', (ws, req) => {
                             stickerData: data.stickerData || null,
                             isSystem: data.isSystem || false,
                             isBot: data.isBot || false,
+                            replyTo: data.replyTo || null,
                             time: Date.now()
                         };
                         
@@ -631,7 +654,7 @@ wss.on('connection', (ws, req) => {
                         if (data.name) updateChat.name = data.name;
                         if (data.description !== undefined) updateChat.description = data.description;
                         if (data.avatar !== undefined) updateChat.avatar = data.avatar;
-                        if (data.participants) updateChat.participants = data.participants;
+                        if (data.participants !== undefined) updateChat.participants = data.participants;
                         saveData(updateData);
                         updateChat.participants.forEach(pid => {
                             const c = clients.get(pid);
