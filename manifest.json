@@ -1,14 +1,36 @@
 {
   "name": "Utopia Messenger",
   "short_name": "Utopia",
-  "description": "Современный мессенджер",
+  "description": "Современный мессенджер с звонками и чатами",
   "start_url": "/",
   "display": "standalone",
   "orientation": "portrait",
   "background_color": "#0e1621",
   "theme_color": "#0e1621",
   "icons": [
-    {"src": "icon-192.png", "sizes": "192x192", "type": "image/png"},
-    {"src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable"}
-  ]
+    {
+      "src": "icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "categories": ["communication", "social"],
+  "shortcuts": [
+    {
+      "name": "Новый чат",
+      "short_name": "Новый чат",
+      "description": "Начать новый чат",
+      "url": "/",
+      "icons": [{ "src": "icon-192.png", "sizes": "192x192" }]
+    }
+  ],
+  "related_applications": [],
+  "prefer_related_applications": false
 }
