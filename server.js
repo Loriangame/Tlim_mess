@@ -1,3 +1,9 @@
+/*
+ * Utopia Messenger
+ * https://github.com/Loriangame/Utopia_messenger
+ * Лицензия MIT
+ */
+
 const express = require('express');
 const cors = require('cors');
 const fs = require('fs');
@@ -7,7 +13,6 @@ const WebSocket = require('ws');
 // ======== PUSH-УВЕДОМЛЕНИЯ ========
 const webpush = require('web-push');
 
-// Очистка ключей от лишних символов
 const cleanVapidKey = (key) => {
     if (!key) return '';
     return key.trim().replace(/\s/g, '');
@@ -27,7 +32,6 @@ if (cleanPublicKey && cleanPrivateKey) {
             cleanPrivateKey
         );
         console.log('✅ VAPID настроен для push-уведомлений');
-        console.log(`📱 Публичный ключ: ${cleanPublicKey.substring(0, 20)}...`);
     } catch (e) {
         console.error('❌ Ошибка настройки VAPID:', e.message);
     }
@@ -463,7 +467,7 @@ app.get('/api/vapid-public-key', (req, res) => {
     if (!cleanPublicKey) {
         return res.status(500).json({ 
             error: 'VAPID не настроен',
-            message: 'Сгенерируйте ключи командой: npx web-push generate-vapid-keys'
+            message: 'Сгенерируйте ключи: npx web-push generate-vapid-keys'
         });
     }
     res.json({ publicKey: cleanPublicKey });
@@ -572,15 +576,26 @@ wss.on('connection', (ws, req) => {
                     ws.send(JSON.stringify({ type: 'auth_success', userId }));
                     break;
                     
-                case 'call_offer':
+                case 'call_offer': {
                     console.log(`📞 Звонок от ${userId} к ${data.targetUserId}`);
-                    if (data.roomId && !groupCalls.has(data.roomId)) {
-                        groupCalls.set(data.roomId, {
-                            participants: [userId, data.targetUserId, ...(data.participants || [])],
-                            offer: data.offer,
-                            isVideo: data.isVideo
-                        });
+                    
+                    // Сохраняем информацию о звонке
+                    if (data.roomId) {
+                        if (!groupCalls.has(data.roomId)) {
+                            groupCalls.set(data.roomId, {
+                                participants: [userId, data.targetUserId, ...(data.participants || [])],
+                                offer: data.offer,
+                                isVideo: data.isVideo
+                            });
+                        } else {
+                            const call = groupCalls.get(data.roomId);
+                            if (!call.participants.includes(userId)) {
+                                call.participants.push(userId);
+                            }
+                        }
                     }
+                    
+                    // Отправляем оффер целевому пользователю
                     const targetWs = clients.get(data.targetUserId);
                     if (targetWs && targetWs.readyState === WebSocket.OPEN) {
                         targetWs.send(JSON.stringify({
@@ -594,8 +609,14 @@ wss.on('connection', (ws, req) => {
                         console.log(`📞 Оффер отправлен ${data.targetUserId}`);
                     } else {
                         console.log(`❌ Пользователь ${data.targetUserId} не в сети`);
+                        ws.send(JSON.stringify({
+                            type: 'call_error',
+                            message: 'Пользователь не в сети'
+                        }));
                     }
-                    if (data.participants) {
+                    
+                    // Отправляем уведомление всем участникам группы
+                    if (data.participants && data.participants.length > 0) {
                         data.participants.forEach(pid => {
                             if (pid !== data.targetUserId && pid !== userId) {
                                 const pWs = clients.get(pid);
@@ -608,13 +629,15 @@ wss.on('connection', (ws, req) => {
                                         roomId: data.roomId || null,
                                         participants: [userId, data.targetUserId]
                                     }));
+                                    console.log(`📞 Оффер отправлен участнику ${pid}`);
                                 }
                             }
                         });
                     }
                     break;
+                }
                     
-                case 'call_answer':
+                case 'call_answer': {
                     console.log(`📞 Ответ от ${userId} к ${data.targetUserId}`);
                     const answerTarget = clients.get(data.targetUserId);
                     if (answerTarget && answerTarget.readyState === WebSocket.OPEN) {
@@ -624,10 +647,13 @@ wss.on('connection', (ws, req) => {
                             answer: data.answer,
                             roomId: data.roomId || null
                         }));
+                        console.log(`📞 Ответ отправлен ${data.targetUserId}`);
                     }
                     break;
+                }
                     
-                case 'ice_candidate':
+                case 'ice_candidate': {
+                    console.log(`🧊 ICE кандидат от ${userId} к ${data.targetUserId}`);
                     const iceTarget = clients.get(data.targetUserId);
                     if (iceTarget && iceTarget.readyState === WebSocket.OPEN) {
                         iceTarget.send(JSON.stringify({
@@ -636,7 +662,9 @@ wss.on('connection', (ws, req) => {
                             candidate: data.candidate,
                             roomId: data.roomId || null
                         }));
+                        console.log(`🧊 ICE отправлен ${data.targetUserId}`);
                     }
+                    // Отправляем ICE кандидаты всем участникам группы
                     if (data.roomId && groupCalls.has(data.roomId)) {
                         const call = groupCalls.get(data.roomId);
                         call.participants.forEach(pid => {
@@ -654,8 +682,9 @@ wss.on('connection', (ws, req) => {
                         });
                     }
                     break;
+                }
                     
-                case 'call_end':
+                case 'call_end': {
                     console.log(`📞 Звонок завершён от ${userId}`);
                     const endTarget = clients.get(data.targetUserId);
                     if (endTarget && endTarget.readyState === WebSocket.OPEN) {
@@ -665,6 +694,7 @@ wss.on('connection', (ws, req) => {
                             roomId: data.roomId || null
                         }));
                     }
+                    // Удаляем групповой звонок
                     if (data.roomId && groupCalls.has(data.roomId)) {
                         const call = groupCalls.get(data.roomId);
                         call.participants.forEach(pid => {
@@ -682,8 +712,9 @@ wss.on('connection', (ws, req) => {
                         groupCalls.delete(data.roomId);
                     }
                     break;
+                }
                     
-                case 'new_message':
+                case 'new_message': {
                     const fileData = loadData();
                     const chat = fileData.chats.find(c => c.id === data.chatId);
                     if (chat) {
@@ -720,8 +751,9 @@ wss.on('connection', (ws, req) => {
                         });
                     }
                     break;
+                }
                     
-                case 'typing':
+                case 'typing': {
                     const typingChat = loadData().chats.find(c => c.id === data.chatId);
                     if (typingChat) {
                         typingChat.participants.forEach(pid => {
@@ -739,8 +771,9 @@ wss.on('connection', (ws, req) => {
                         });
                     }
                     break;
+                }
                     
-                case 'update_chat':
+                case 'update_chat': {
                     const updateData = loadData();
                     const updateChat = updateData.chats.find(c => c.id === data.chatId);
                     if (updateChat) {
@@ -761,6 +794,7 @@ wss.on('connection', (ws, req) => {
                         });
                     }
                     break;
+                }
             }
         } catch (e) {
             console.error('WebSocket ошибка:', e);
