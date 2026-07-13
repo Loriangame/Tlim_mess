@@ -9,10 +9,9 @@ const cors = require('cors');
 const fs = require('fs');
 const path = require('path');
 const WebSocket = require('ws');
-
-// ======== PUSH-УВЕДОМЛЕНИЯ ========
 const webpush = require('web-push');
 
+// ======== VAPID КЛЮЧИ ========
 const cleanVapidKey = (key) => {
     if (!key) return '';
     return key.trim().replace(/\s/g, '');
@@ -280,6 +279,16 @@ app.post('/api/register', (req, res) => {
     res.json({ success: true, user: { id: user.id, name: user.name, email: user.email, phone: user.phone } });
 });
 
+app.post('/api/login', (req, res) => {
+    const { name, password } = req.body;
+    const data = loadData();
+    const user = data.users.find(u => u.name === name && u.password === password);
+    if (!user) {
+        return res.status(400).json({ error: 'Неверное имя или пароль' });
+    }
+    res.json({ success: true, user: { id: user.id, name: user.name, email: user.email, phone: user.phone, avatar: user.avatar } });
+});
+
 app.post('/api/reset-password', async (req, res) => {
     const { name, email } = req.body;
     if (!name || !email) {
@@ -348,16 +357,6 @@ app.post('/api/reset-password-verify', (req, res) => {
     res.json({ success: true, message: 'Пароль успешно изменён' });
 });
 
-app.post('/api/login', (req, res) => {
-    const { name, password } = req.body;
-    const data = loadData();
-    const user = data.users.find(u => u.name === name && u.password === password);
-    if (!user) {
-        return res.status(400).json({ error: 'Неверное имя или пароль' });
-    }
-    res.json({ success: true, user: { id: user.id, name: user.name, email: user.email, phone: user.phone, avatar: user.avatar } });
-});
-
 app.get('/api/users', (req, res) => {
     const data = loadData();
     res.set('Cache-Control', 'no-store, no-cache, must-revalidate, private');
@@ -397,7 +396,8 @@ app.post('/api/chats', (req, res) => {
         avatar: avatar || null,
         messages: [],
         pinnedMessages: [],
-        inviteCode: null
+        inviteCode: null,
+        isBlocked: false
     };
     data.chats.push(chat);
     saveData(data);
@@ -406,7 +406,7 @@ app.post('/api/chats', (req, res) => {
 
 app.put('/api/chats/:chatId', (req, res) => {
     const { chatId } = req.params;
-    const { name, description, avatar, inviteCode, participants } = req.body;
+    const { name, description, avatar, inviteCode, participants, isBlocked } = req.body;
     const data = loadData();
     const chat = data.chats.find(c => c.id === chatId);
     if (!chat) {
@@ -417,6 +417,7 @@ app.put('/api/chats/:chatId', (req, res) => {
     if (avatar !== undefined) chat.avatar = avatar;
     if (inviteCode !== undefined) chat.inviteCode = inviteCode;
     if (participants !== undefined) chat.participants = participants;
+    if (isBlocked !== undefined) chat.isBlocked = isBlocked;
     saveData(data);
     res.json(chat);
 });
@@ -495,7 +496,7 @@ app.post('/api/subscribe', (req, res) => {
 });
 
 app.post('/api/send-push', async (req, res) => {
-    const { title, body, from, roomId, isVideo, type, chatId, text, chatName } = req.body;
+    const { title, body, from, roomId, isVideo, type, chatId, text, chatName, userId } = req.body;
     
     if (!cleanPublicKey || !cleanPrivateKey) {
         return res.status(500).json({ error: 'VAPID не настроен' });
@@ -598,6 +599,18 @@ wss.on('connection', (ws, req) => {
                     console.log(`✅ Пользователь ${userId} авторизован`);
                     ws.send(JSON.stringify({ type: 'auth_success', userId }));
                     break;
+                    
+                case 'get_call_info': {
+                    const roomId = data.roomId;
+                    if (roomId && groupCalls.has(roomId)) {
+                        ws.send(JSON.stringify({
+                            type: 'call_info',
+                            roomId: roomId,
+                            call: groupCalls.get(roomId)
+                        }));
+                    }
+                    break;
+                }
                     
                 case 'call_offer': {
                     console.log(`📞 Звонок от ${userId} к ${data.targetUserId}`);
@@ -764,6 +777,29 @@ wss.on('connection', (ws, req) => {
                                     type: 'new_message',
                                     chatId: data.chatId,
                                     message: msg
+                                }));
+                            }
+                        });
+                    }
+                    break;
+                }
+                    
+                case 'delete_message': {
+                    const fileData = loadData();
+                    const chat = fileData.chats.find(c => c.id === data.chatId);
+                    if (chat) {
+                        chat.messages = chat.messages.filter(m => m.id !== data.msgId);
+                        if (chat.pinnedMessages) {
+                            chat.pinnedMessages = chat.pinnedMessages.filter(id => id !== data.msgId);
+                        }
+                        saveData(fileData);
+                        chat.participants.forEach(pid => {
+                            const c = clients.get(pid);
+                            if (c && c.readyState === WebSocket.OPEN) {
+                                c.send(JSON.stringify({
+                                    type: 'message_deleted',
+                                    chatId: data.chatId,
+                                    msgId: data.msgId
                                 }));
                             }
                         });
