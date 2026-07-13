@@ -810,3 +810,18 @@ wss.on('connection', (ws, req) => {
         console.error('WebSocket ошибка:', error);
     });
 });
+// Добавьте новый тип для получения информации о звонке
+case 'get_call_info': {
+    console.log(`📞 Запрос информации о звонке ${data.roomId}`);
+    if (data.roomId && groupCalls.has(data.roomId)) {
+        const call = groupCalls.get(data.roomId);
+        ws.send(JSON.stringify({
+            type: 'call_info',
+            roomId: data.roomId,
+            offer: call.offer,
+            isVideo: call.isVideo,
+            participants: call.participants
+        }));
+    }
+    break;
+}
