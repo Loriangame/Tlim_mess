@@ -495,7 +495,7 @@ app.post('/api/subscribe', (req, res) => {
 });
 
 app.post('/api/send-push', async (req, res) => {
-    const { title, body, from, roomId, isVideo } = req.body;
+    const { title, body, from, roomId, isVideo, type, chatId, text, chatName } = req.body;
     
     if (!cleanPublicKey || !cleanPrivateKey) {
         return res.status(500).json({ error: 'VAPID не настроен' });
@@ -505,13 +505,36 @@ app.post('/api/send-push', async (req, res) => {
     }
     
     try {
-        const payload = JSON.stringify({
-            title: title || '📞 Входящий звонок',
-            body: body || 'Вам звонят!',
-            from: from || 'unknown',
-            roomId: roomId || 'unknown',
-            isVideo: isVideo || false
-        });
+        let payloadData = {};
+        
+        if (type === 'call') {
+            payloadData = {
+                type: 'call',
+                title: title || '📞 Входящий звонок',
+                body: body || 'Вам звонят!',
+                from: from || 'неизвестный',
+                roomId: roomId || 'unknown',
+                isVideo: isVideo || false
+            };
+        } else if (type === 'message') {
+            payloadData = {
+                type: 'message',
+                title: title || '💬 Новое сообщение',
+                body: body || text || 'Новое сообщение',
+                from: from || 'неизвестный',
+                chatId: chatId || 'unknown',
+                text: text || '',
+                chatName: chatName || 'Чат'
+            };
+        } else {
+            payloadData = {
+                type: 'default',
+                title: title || 'Utopia',
+                body: body || 'Новое уведомление'
+            };
+        }
+        
+        const payload = JSON.stringify(payloadData);
         
         const options = {
             TTL: 60,
@@ -535,7 +558,7 @@ app.post('/api/send-push', async (req, res) => {
         
         const results = await Promise.all(promises);
         const successCount = results.filter(r => r.success).length;
-        console.log(`✅ Push отправлены: ${successCount}/${pushSubscriptions.length + results.filter(r => !r.success).length}`);
+        console.log(`✅ Push отправлены: ${successCount}/${results.length}`);
         res.json({ success: true, count: successCount });
     } catch (error) {
         console.error('❌ Ошибка отправки push:', error);
@@ -579,7 +602,6 @@ wss.on('connection', (ws, req) => {
                 case 'call_offer': {
                     console.log(`📞 Звонок от ${userId} к ${data.targetUserId}`);
                     
-                    // Сохраняем информацию о звонке
                     if (data.roomId) {
                         if (!groupCalls.has(data.roomId)) {
                             groupCalls.set(data.roomId, {
@@ -595,7 +617,6 @@ wss.on('connection', (ws, req) => {
                         }
                     }
                     
-                    // Отправляем оффер целевому пользователю
                     const targetWs = clients.get(data.targetUserId);
                     if (targetWs && targetWs.readyState === WebSocket.OPEN) {
                         targetWs.send(JSON.stringify({
@@ -615,7 +636,6 @@ wss.on('connection', (ws, req) => {
                         }));
                     }
                     
-                    // Отправляем уведомление всем участникам группы
                     if (data.participants && data.participants.length > 0) {
                         data.participants.forEach(pid => {
                             if (pid !== data.targetUserId && pid !== userId) {
@@ -664,7 +684,6 @@ wss.on('connection', (ws, req) => {
                         }));
                         console.log(`🧊 ICE отправлен ${data.targetUserId}`);
                     }
-                    // Отправляем ICE кандидаты всем участникам группы
                     if (data.roomId && groupCalls.has(data.roomId)) {
                         const call = groupCalls.get(data.roomId);
                         call.participants.forEach(pid => {
@@ -694,7 +713,6 @@ wss.on('connection', (ws, req) => {
                             roomId: data.roomId || null
                         }));
                     }
-                    // Удаляем групповой звонок
                     if (data.roomId && groupCalls.has(data.roomId)) {
                         const call = groupCalls.get(data.roomId);
                         call.participants.forEach(pid => {
@@ -810,18 +828,3 @@ wss.on('connection', (ws, req) => {
         console.error('WebSocket ошибка:', error);
     });
 });
-// Добавьте новый тип для получения информации о звонке
-case 'get_call_info': {
-    console.log(`📞 Запрос информации о звонке ${data.roomId}`);
-    if (data.roomId && groupCalls.has(data.roomId)) {
-        const call = groupCalls.get(data.roomId);
-        ws.send(JSON.stringify({
-            type: 'call_info',
-            roomId: data.roomId,
-            offer: call.offer,
-            isVideo: call.isVideo,
-            participants: call.participants
-        }));
-    }
-    break;
-}
