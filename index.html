@@ -1171,6 +1171,286 @@ document.addEventListener('DOMContentLoaded', async function() {
     console.log('✅ Все кнопки подключены!');
     console.log('🚀 Utopia загружена!');
 });
+        // ======== ОБРАБОТКА УВЕДОМЛЕНИЙ О СООБЩЕНИЯХ ========
+
+// Функция для отправки push-уведомления о новом сообщении
+function sendMessageNotification(chatId, sender, text, chatName) {
+    if (!('serviceWorker' in navigator)) return;
+    if (document.hidden) {
+        // Отправляем через сервер
+        fetch('/api/send-push', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                type: 'message',
+                chatId: chatId,
+                from: sender,
+                text: text,
+                chatName: chatName || 'Чат',
+                title: `💬 ${sender}`
+            })
+        }).catch(e => console.warn('Ошибка отправки push:', e));
+    }
+}
+
+// ======== ОБРАБОТКА СООБЩЕНИЙ ОТ SERVICE WORKER ========
+if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.addEventListener('message', function(event) {
+        const data = event.data;
+        console.log('📨 Получено от SW:', data);
+        
+        // ======== ПРИНЯТЬ ЗВОНОК ========
+        if (data.type === 'call_accept') {
+            console.log('📞 Звонок принят из уведомления');
+            if (state.pendingCallData && state.pendingCallData.roomId === data.roomId) {
+                const d = state.pendingCallData;
+                // Отвечаем на звонок
+                answerCall(d.offer, d.from, d.isVideo || false);
+                state.pendingCallData = null;
+                stopRingtone();
+            } else {
+                // Если данных нет, пытаемся найти звонок
+                console.log('🔄 Поиск звонка...');
+                // Показываем интерфейс звонка
+                document.getElementById('callContainer').style.display = 'flex';
+                document.getElementById('callStatus').textContent = `📞 Подключение к ${data.from}...`;
+                document.getElementById('callStatus').classList.add('call-ringing');
+                
+                // Пытаемся получить данные звонка через WebSocket
+                if (wsConnected && ws.readyState === WebSocket.OPEN) {
+                    ws.send(JSON.stringify({
+                        type: 'get_call_info',
+                        roomId: data.roomId
+                    }));
+                }
+            }
+        }
+        
+        // ======== ОТКЛОНИТЬ ЗВОНОК ========
+        if (data.type === 'call_reject') {
+            console.log('📞 Звонок отклонён из уведомления');
+            if (state.pendingCallData && state.pendingCallData.roomId === data.roomId) {
+                const d = state.pendingCallData;
+                if (wsConnected && ws.readyState === WebSocket.OPEN) {
+                    ws.send(JSON.stringify({
+                        type: 'call_end',
+                        targetUserId: d.from,
+                        roomId: d.roomId
+                    }));
+                }
+                state.pendingCallData = null;
+                document.getElementById('callContainer').style.display = 'none';
+                stopRingtone();
+            }
+        }
+        
+        // ======== ОТКРЫТЬ ЧАТ ========
+        if (data.type === 'open_chat') {
+            console.log('📨 Открываем чат:', data.chatId);
+            const chat = getChat(data.chatId);
+            if (chat) {
+                openChat(data.chatId);
+                // Показываем уведомление об открытии
+                if ('Notification' in window && Notification.permission === 'granted') {
+                    new Notification('💬 Чат открыт', {
+                        body: `Вы перешли в чат ${getChatName(chat)}`,
+                        icon: '/icon-192.png',
+                        silent: true
+                    });
+                }
+            }
+        }
+        
+        // ======== ОТВЕТИТЬ В ЧАТ ========
+        if (data.type === 'reply_to_chat') {
+            console.log('✏️ Ответ в чат:', data.chatId);
+            const chat = getChat(data.chatId);
+            if (chat) {
+                openChat(data.chatId);
+                // Фокусируемся на поле ввода
+                setTimeout(() => {
+                    document.getElementById('messageInput').focus();
+                    document.getElementById('messageInput').placeholder = `Ответ ${data.replyTo}...`;
+                }, 500);
+            }
+        }
+    });
+}
+
+// ======== ПЕРЕОПРЕДЕЛЕНИЕ sendMessage ДЛЯ ОТПРАВКИ PUSH ========
+const _originalSendMessage = sendMessage;
+sendMessage = function(text, videoData, isCircle, fileData, audioData, isSticker, replyTo) {
+    // Вызываем оригинальную функцию
+    _originalSendMessage(text, videoData, isCircle, fileData, audioData, isSticker, replyTo);
+    
+    // Отправляем push-уведомление о сообщении
+    const chat = getChat(state.currentChatId);
+    if (chat && text) {
+        // Определяем получателей (все участники кроме отправителя)
+        const recipients = chat.participants.filter(id => id !== state.user.id);
+        recipients.forEach(recipientId => {
+            const user = state.allUsers.find(u => u.id === recipientId);
+            if (user) {
+                // Отправляем уведомление через сервер
+                fetch('/api/send-push', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        type: 'message',
+                        chatId: chat.id,
+                        from: state.user.name,
+                        text: text,
+                        chatName: getChatName(chat),
+                        userId: recipientId,
+                        title: `💬 ${state.user.name}`
+                    })
+                }).catch(e => console.warn('Ошибка отправки push:', e));
+            }
+        });
+    }
+};
+
+// ======== ПЕРЕОПРЕДЕЛЕНИЕ showCallModal ДЛЯ УЛУЧШЕННЫХ УВЕДОМЛЕНИЙ ========
+const _originalShowCallModal = window.showCallModal;
+window.showCallModal = function(data) {
+    const userName = getUserName(data.from);
+    const isVideo = data.isVideo || false;
+    
+    state.pendingCallData = data;
+    
+    // Воспроизводим звук звонка
+    playRingtone();
+    
+    // Отправляем push-уведомление (всегда, не только когда страница скрыта)
+    if ('serviceWorker' in navigator) {
+        sendPushNotification(data.from, data.roomId, isVideo);
+        playRingtoneInBackground();
+    }
+    
+    // Показываем модальное окно
+    openModal('📞 Входящий звонок', `
+        <div style="text-align:center;padding:20px 0;">
+            <div style="font-size:64px;margin-bottom:10px;animation:ring 1s ease-in-out infinite;">${isVideo ? '🎥' : '📞'}</div>
+            <h3 style="color:#64b5f6;font-size:20px;">${userName}</h3>
+            <p style="color:#8e9fb1;font-size:14px;margin-top:4px;">${isVideo ? 'Видеозвонок' : 'Аудиозвонок'}</p>
+            <div class="call-modal-buttons">
+                <button id="callAcceptBtn" class="accept-call" title="Принять">✅</button>
+                <button id="callRejectBtn" class="reject-call" title="Отклонить">❌</button>
+            </div>
+            <p style="color:#8e9fb1;font-size:11px;margin-top:12px;">Нажмите ✅ чтобы ответить</p>
+        </div>
+    `);
+    
+    // Обработчик принятия
+    document.getElementById('callAcceptBtn').addEventListener('click', () => {
+        stopRingtone();
+        closeModal();
+        if (state.pendingCallData) {
+            const d = state.pendingCallData;
+            answerCall(d.offer, d.from, d.isVideo || false);
+            state.pendingCallData = null;
+        }
+    });
+    
+    // Обработчик отклонения
+    document.getElementById('callRejectBtn').addEventListener('click', () => {
+        stopRingtone();
+        closeModal();
+        if (state.pendingCallData) {
+            const d = state.pendingCallData;
+            if (wsConnected && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({
+                    type: 'call_end',
+                    targetUserId: d.from,
+                    roomId: d.roomId
+                }));
+            }
+            state.pendingCallData = null;
+            document.getElementById('callContainer').style.display = 'none';
+        }
+    });
+    
+    // Автоотклонение через 30 секунд
+    setTimeout(() => {
+        if (state.pendingCallData) {
+            stopRingtone();
+            closeModal();
+            const d = state.pendingCallData;
+            if (wsConnected && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({
+                    type: 'call_end',
+                    targetUserId: d.from,
+                    roomId: d.roomId
+                }));
+            }
+            state.pendingCallData = null;
+            document.getElementById('callContainer').style.display = 'none';
+        }
+    }, 30000);
+};
+
+// ======== ОБНОВЛЁННАЯ ФУНКЦИЯ SEND PUSH NOTIFICATION ========
+function sendPushNotification(from, roomId, isVideo) {
+    if (!('serviceWorker' in navigator)) return;
+    
+    // Отправляем через сервер для надёжности
+    fetch('/api/send-push', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            type: 'call',
+            from: getUserName(from),
+            roomId: roomId,
+            isVideo: isVideo || false,
+            title: '📞 Входящий звонок'
+        })
+    }).catch(e => console.warn('Ошибка отправки push:', e));
+}
+
+// ======== ЗАПРОС РАЗРЕШЕНИЯ НА УВЕДОМЛЕНИЯ ========
+async function requestNotificationPermission() {
+    if (!('Notification' in window)) {
+        console.log('❌ Уведомления не поддерживаются');
+        return false;
+    }
+    
+    if (Notification.permission === 'granted') {
+        console.log('✅ Уведомления уже разрешены');
+        return true;
+    }
+    
+    if (Notification.permission === 'denied') {
+        console.log('❌ Уведомления запрещены пользователем');
+        return false;
+    }
+    
+    const permission = await Notification.requestPermission();
+    console.log('📨 Разрешение на уведомления:', permission);
+    return permission === 'granted';
+}
+
+// ======== ПРОВЕРКА ПОДПИСКИ НА PUSH ========
+async function checkPushSubscription() {
+    if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+        console.log('❌ Push не поддерживается');
+        return false;
+    }
+    
+    try {
+        const registration = await navigator.serviceWorker.ready;
+        const subscription = await registration.pushManager.getSubscription();
+        if (subscription) {
+            console.log('✅ Есть активная подписка на push');
+            return true;
+        } else {
+            console.log('❌ Нет активной подписки');
+            return false;
+        }
+    } catch (error) {
+        console.error('❌ Ошибка проверки подписки:', error);
+        return false;
+    }
+}
     </script>
 </body>
 </html>
